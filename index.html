@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>ledplat remote</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="MiniSAE">
+<style>
+:root {
+  --bg: #14120f; --card: #1d1a16; --line: #2e2a24;
+  --fg: #f0ece6; --dim: #8f887e; --accent: #e0a33c; --warn: #d97a3a;
+  --danger: #c8553d; --ok: #6fa86f;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+}
+#app { max-width: 460px; margin: 0 auto; padding: 10px 12px 28px; }
+header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 2px; border-bottom: 1px solid var(--line);
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
+.dot.on { background: var(--ok); }
+.name { font-weight: 500; }
+.meta { margin-left: auto; color: var(--dim); font-size: 13px; }
+.meta.warn { color: var(--warn); }
+.tabs { display: flex; gap: 2px; padding: 10px 0 4px; }
+.tab {
+  flex: 1; background: none; border: 0; color: var(--dim);
+  font: inherit; font-size: 13px; padding: 7px 2px; border-radius: 7px;
+}
+.tab.on { background: rgba(224,163,60,.14); color: var(--accent); }
+main { padding-top: 6px; }
+.grid2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 6px; margin: 8px 0 14px; }
+.grid3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; margin: 6px 0 14px; }
+.grid4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; margin: 6px 0 12px; }
+.btn {
+  background: var(--card); border: 1px solid var(--line); color: var(--fg);
+  font: inherit; font-size: 13px; padding: 11px 2px; border-radius: 8px;
+}
+.btn.sm { font-size: 12px; padding: 8px 2px; }
+.btn.on { border-color: var(--accent); color: var(--accent); }
+.btn.dim { color: var(--dim); }
+.btn.danger { border-color: var(--danger); color: var(--danger); }
+.label { font-size: 12px; color: var(--dim); margin: 10px 0 2px; }
+.ctl { display: flex; align-items: center; gap: 10px; margin: 9px 0; }
+.ctl label { width: 92px; font-size: 13px; color: var(--dim); flex: none; }
+.ctl input[type=range] { flex: 1; accent-color: var(--accent); min-width: 0; }
+.ctl input[type=color] {
+  flex: 1; height: 30px; padding: 0; background: none;
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.ctl .val { width: 44px; text-align: right; font-size: 13px; flex: none; }
+.locked { opacity: .45; pointer-events: none; }
+.danger {
+  display: flex; align-items: center; gap: 8px; font-size: 13px;
+  color: var(--dim); border-top: 1px solid var(--line);
+  margin-top: 16px; padding-top: 12px;
+}
+.danger .btn { margin-left: auto; }
+.stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-bottom: 12px; }
+.stat { background: var(--card); border-radius: 8px; padding: 8px 10px; }
+.stat .k, .meter .k { font-size: 11px; color: var(--dim); }
+.stat .v { font-size: 21px; }
+.meter { background: var(--card); border-radius: 8px; padding: 10px; margin: 12px 0; }
+.bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 7px 0; }
+.fill { height: 100%; background: var(--accent); }
+.fill.warn { background: var(--warn); }
+.row { display: flex; gap: 6px; margin-bottom: 8px; }
+.row input {
+  flex: 1; background: var(--card); border: 1px solid var(--line);
+  color: var(--fg); font: inherit; font-size: 13px; padding: 9px; border-radius: 8px;
+}
+.log {
+  background: var(--card); border-radius: 8px; padding: 10px; margin: 0;
+  font-size: 11px; white-space: pre-wrap; word-break: break-all;
+  max-height: 46vh; overflow: auto; color: var(--dim);
+}
+#gate { text-align: center; padding: 16vh 0; }
+#gate p { color: var(--dim); font-size: 13px; max-width: 300px; margin: 12px auto; }
+#showall {
+  display: block; margin: 12px auto 0; background: none;
+  border: 1px solid var(--line); color: var(--dim); font: inherit;
+  font-size: 13px; padding: 9px 18px; border-radius: 8px;
+}
+#connect {
+  background: var(--accent); border: 0; color: #191612; font: inherit;
+  font-weight: 500; padding: 13px 30px; border-radius: 9px;
+}
+#err { color: var(--danger); font-size: 13px; min-height: 18px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="gate">
+    <button id="connect">Connect</button>
+    <button id="showall" hidden>Show all devices</button>
+    <p id="hint"></p>
+    <p id="err"></p>
+  </div>
+</div>
+
+<script>
+// Registered before the module so a cold start with no network still finds
+// the cache. Failure is non-fatal: without a service worker the remote still
+// works, it just needs the network to load.
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+</script>
+<script type="module">
+import { BleTransport, WsTransport } from './ble.js';
+import { Device } from './device.js';
+import { UI } from './ui.js';
+
+const app = document.getElementById('app');
+const gate = document.getElementById('gate');
+const err = document.getElementById('err');
+const hint = document.getElementById('hint');
+
+// The bridge is a dev convenience, so it is opt-in via ?sim rather than
+// something the app probes for — a page that silently connected to a
+// simulator instead of the object would be a confusing thing to debug.
+const useSim = new URLSearchParams(location.search).has('sim');
+
+hint.textContent = useSim
+  ? 'Simulator mode: connecting to tools/webble/bridge.py.'
+  : BleTransport.available
+    ? 'Bluetooth pairing is a system prompt; pick MiniSAE.'
+    : 'This browser has no Web Bluetooth. On iPhone use Bluefy; '
+      + 'Safari, Chrome and Edge on iOS all lack it.';
+
+const showAllBtn = document.getElementById('showall');
+
+async function start(showAll) {
+  err.textContent = '';
+  try {
+    const t = useSim ? new WsTransport() : new BleTransport();
+    const dev = new Device(t);
+    await dev.connect({ showAll });
+
+    const ui = new UI(dev, app);
+    t.onDisconnect = () => {
+      clearInterval(ui.poll);
+      app.innerHTML = '';
+      app.appendChild(gate);
+      err.textContent = 'Disconnected.';
+    };
+    app.innerHTML = '';
+    await ui.start();
+  } catch (e) {
+    // A rejected picker is the user changing their mind, not a failure.
+    const msg = String(e.message ?? e);
+    const cancelled = /cancell?ed|User cancelled/i.test(msg);
+    err.textContent = cancelled ? '' : msg;
+    // NotFoundError covers both "you cancelled" and "nothing matched", and
+    // the two are indistinguishable from here. Offer the unfiltered retry
+    // either way rather than leaving a dead end.
+    if (!showAll) showAllBtn.hidden = false;
+  }
+}
+
+document.getElementById('connect').onclick =
+  () => start(BleTransport.needsShowAll && !useSim);
+showAllBtn.onclick = () => start(true);
+</script>
+</body>
+</html>
