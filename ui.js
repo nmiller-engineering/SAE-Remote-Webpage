@@ -144,6 +144,8 @@ export class UI {
     this.root = root;
     this.tab = 'look';
     this.state = { effects: [], mod: null, groups: [], look: null, axis: 0 };
+    this.renderToken = 0;
+    this.liveEls = null;
     this.poll = null;
   }
 
@@ -181,9 +183,33 @@ export class UI {
       try {
         this.state.diag = await this.dev.diag();
         this.renderHeader();
-        if (this.tab === 'sound') this.renderBody();
+        // Update the live numbers IN PLACE. Calling renderBody() here tore
+        // the page down and rebuilt it twice a second — and because
+        // renderSound() awaits `s2l`, the body sat empty for most of each
+        // cycle. That is the flicker, and the reason nothing but the header
+        // appeared to work.
+        await this.refreshLive();
       } catch { /* a dropped poll is not worth surfacing */ }
     }, 500);
+  }
+
+  // Live values only, no DOM rebuild. Cheap enough at 2 Hz and leaves every
+  // slider mid-drag alone, which a re-render would not.
+  async refreshLive() {
+    if (this.tab !== 'sound' || !this.liveEls) return;
+    const r = await this.dev.send('s2l').catch(() => null);
+    const a = r?.s2l?.live;
+    if (!a) return;
+    this.liveEls.bpm.textContent = a.conf > 0.2 ? Math.round(a.bpm) : '—';
+    this.liveEls.conf.textContent = a.conf.toFixed(2);
+    this.liveEls.beats.textContent = String(a.beats);
+    if (this.liveEls.note) {
+      // Frames arriving but no confident tempo is a different state from a
+      // dead microphone, and only one of them is worth acting on.
+      this.liveEls.note.textContent = a.beats === 0 && a.thresh === 0
+        ? 'No audio yet — silent room, or the microphone is not delivering.'
+        : '';
+    }
   }
 
   // ---- rendering ---------------------------------------------------------
@@ -217,9 +243,14 @@ export class UI {
     this.header.appendChild(el('span', 'name', this.dev.name));
     const right = el('span', 'meta');
     if (d) {
+      // Always lead with the current draw. It used to read just
+      // "limiter 0.57", which on the Sound page looks like something to do
+      // with audio — it is the POWER limiter, and the same header shows on
+      // every tab. Naming the unit removes the ambiguity.
       const clamped = d.scale < 0.995;
-      right.textContent = clamped ? `limiter ${d.scale.toFixed(2)}`
-                                  : `${d.est_ma} mA`;
+      right.textContent = clamped
+        ? `${d.est_ma} mA · power-limited ${d.scale.toFixed(2)}×`
+        : `${d.est_ma} mA`;
       right.classList.toggle('warn', clamped);
     }
     this.header.appendChild(right);
@@ -227,7 +258,12 @@ export class UI {
 
   renderBody() {
     if (!this.body) return;
+    // Renders are async (they read live values from the device). A slower
+    // one that has been superseded must not append into the page the newer
+    // one has already drawn.
+    const token = ++this.renderToken;
     this.body.innerHTML = '';
+    this.liveEls = null;
     // renderLook and the others are async (they read live values from the
     // device). Errors are caught here rather than becoming unhandled
     // rejections that leave a half-drawn page with nothing in the console.
@@ -238,7 +274,10 @@ export class UI {
       setup: () => this.renderSetup(),
       console: () => this.renderConsole(),
     }[this.tab];
-    Promise.resolve(fn?.call(this)).catch((e) => {
+    Promise.resolve(fn?.call(this)).then(() => {
+      if (token !== this.renderToken) return;
+    }).catch((e) => {
+      if (token !== this.renderToken) return;
       this.body.appendChild(el('div', 'label', String(e.message ?? e)));
     });
   }
@@ -322,17 +361,26 @@ export class UI {
 
     // Segment row, from map info. Three fit a phone; the rest are real
     // groups and belong behind "more" rather than off the end of a row.
+    // Multi-select. Selector::groups_any is a bitmask and always was, so
+    // several sections at once is what the engine was built for — only the
+    // command parser and this row were single-choice.
     this.body.appendChild(el('div', 'label', 'applies to'));
     const segs = ['all', ...this.state.groups];
     const shown = this.state.allSegs ? segs : segs.slice(0, 3);
+    const sel = this.state.segs ?? [];        // empty means "all"
     const segRow = el('div', 'grid3');
     for (const g of shown) {
-      const b = el('button',
-                   this.state.seg === g || (!this.state.seg && g === 'all')
-                     ? 'btn sm on' : 'btn sm', g);
+      const active = g === 'all' ? sel.length === 0 : sel.includes(g);
+      const b = el('button', active ? 'btn sm on' : 'btn sm', g);
       b.onclick = () => {
-        this.state.seg = g;
-        this.dev.setModSel(g);
+        if (g === 'all') {
+          this.state.segs = [];
+        } else {
+          const next = sel.includes(g) ? sel.filter((x) => x !== g)
+                                       : [...sel, g];
+          this.state.segs = next;
+        }
+        this.applyModSel();
         this.renderBody();
       };
       segRow.appendChild(b);
@@ -387,6 +435,15 @@ export class UI {
     }
   }
 
+  // Deselecting the last group falls back to `all` rather than selecting
+  // nothing: a pattern applied to no LEDs is indistinguishable from a broken
+  // pattern, and nobody taps a segment off in order to see nothing.
+  applyModSel() {
+    const sel = this.state.segs ?? [];
+    return this.dev.send(sel.length ? `mod sel group ${sel.join(' ')}`
+                                    : 'mod sel all');
+  }
+
   async renderSound() {
     // One `s2l` call carries both the tuning and the live values, so this
     // page works on the device. It used to read the simulator-only `audio`
@@ -396,15 +453,21 @@ export class UI {
     const a = r?.s2l?.live ?? null;
     this.state.s2lParams = params;
     const stats = el('div', 'stats');
-    for (const [k, v] of [['tempo', a ? Math.round(a.bpm) : '—'],
-                          ['conf', a ? a.conf.toFixed(2) : '—'],
-                          ['beats', a ? a.beats : '—']]) {
+    this.liveEls = {};
+    for (const [k, key, v] of [
+        ['tempo', 'bpm', a && a.conf > 0.2 ? Math.round(a.bpm) : '—'],
+        ['conf', 'conf', a ? a.conf.toFixed(2) : '—'],
+        ['beats', 'beats', a ? a.beats : '—']]) {
       const c = el('div', 'stat');
       c.appendChild(el('div', 'k', k));
-      c.appendChild(el('div', 'v', String(v)));
+      const val = el('div', 'v', String(v));
+      this.liveEls[key] = val;
+      c.appendChild(val);
       stats.appendChild(c);
     }
     this.body.appendChild(stats);
+    this.liveEls.note = el('div', 'label', '');
+    this.body.appendChild(this.liveEls.note);
 
     if (!params.length) {
       // `s2l` answers no_audio_service when no detector is attached. Say so
@@ -538,17 +601,28 @@ export class UI {
     if (!adv.length) return;
     const head = el('div', 'danger');
     head.appendChild(el('span', '', 'Power model'));
-    const unlock = el('button', 'btn sm danger',
-                      this.state.unlocked ? 'lock' : 'unlock');
+    // Two taps in the page, NOT confirm(). A native confirm() is suppressed
+    // in some iOS web views, and when it is, it returns undefined and the
+    // panel silently stays locked — which looks exactly like a dead button.
+    const label = this.state.unlocked ? 'lock'
+                : this.state.armed ? 'tap again' : 'unlock';
+    const unlock = el('button', 'btn sm danger', label);
     unlock.onclick = () => {
-      this.state.unlocked = !this.state.unlocked
-        && confirm('These set the current limit and the LED current model. '
-                 + 'Wrong values can brown out or overdraw the object. '
-                 + 'Unlock?');
+      if (this.state.unlocked) { this.state.unlocked = false; this.state.armed = false; }
+      else if (this.state.armed) { this.state.unlocked = true; this.state.armed = false; }
+      else { this.state.armed = true; }
       this.renderBody();
     };
     head.appendChild(unlock);
     this.body.appendChild(head);
+
+    if (this.state.armed) {
+      const w = el('div', 'label',
+        'These set the current limit and the LED current model. Wrong values '
+        + 'can brown out or overdraw the object.');
+      w.style.color = 'var(--warn)';
+      this.body.appendChild(w);
+    }
 
     const wrap = el('div', this.state.unlocked ? '' : 'locked');
     for (const p of adv) {

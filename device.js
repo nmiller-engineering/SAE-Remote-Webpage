@@ -123,9 +123,10 @@ export class Device {
   setBlend(layer, mode)   { return this.send(`blend ${layer} ${mode}`); }
   setMod(id)              { return this.send(`mod ${id}`); }
   setModParam(pid, v)     { return this.send(`mod set ${pid} ${v}`); }
-  setModSel(group)        {
-    return this.send(group === 'all' ? 'mod sel all'
-                                     : `mod sel group ${group}`);
+  // One or more group names; empty or 'all' selects everything.
+  setModSel(groups) {
+    const g = [].concat(groups ?? []).filter((x) => x && x !== 'all');
+    return this.send(g.length ? `mod sel group ${g.join(' ')}` : 'mod sel all');
   }
   setSpeed(mode)          { return this.send(`mod speed ${mode}`); }
   setS2l(key, v)          { return this.send(`s2l ${key} ${v}`); }
