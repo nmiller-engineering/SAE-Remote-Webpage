@@ -310,48 +310,50 @@ export class UI {
     }
 
     const look = LOOKS.find((l) => l.key === this.state.look);
-    if (!look?.fx) return;
-    const fx = this.fxByName(look.fx);
-    if (!fx) return;
+    if (!look?.zones?.length) return;
 
-    // The layer the look put this effect on. NOT always 0: `liquid` sits on
-    // layer 1 above a grey vessel, and sending its edits to layer 0 meant
-    // level and glass went to an effect without those pids (silently
-    // ignored) while its colour collided with the vessel's own pid 3.
-    const layer = look.layer ?? 0;
+    // A look can drive several (effect, layer) pairs — `solid` paints the
+    // vessel on layer 0 and the ice on layer 1 — so controls are rendered
+    // per zone. Sending everything to one layer is what made liquid's level
+    // and glass colour disappear before.
+    for (const zone of look.zones) {
+      const fx = this.fxByName(zone.fx);
+      if (!fx) continue;
 
-    // fxlist gives min/max/def but no live value; `settings` has the values.
-    // Without this a slider opens at the default and the object jumps to it
-    // the moment you touch it.
-    const live = await this.dev.layerParams(layer).catch(() => ({}));
+      // fxlist gives min/max/def but no live value; `settings` has the
+      // values. Without this a slider opens at the default and the object
+      // jumps to it the moment you touch it.
+      const live = await this.dev.layerParams(zone.layer).catch(() => ({}));
 
-    // Rainbow's direction: named buttons over a device-reported range.
-    if (look.fx === 'rainbow') {
-      const axisSpec = fx.params.find((p) => p.key === 'axis');
-      if (axisSpec) {
-        this.body.appendChild(el('div', 'label', 'direction'));
-        const row = el('div', 'grid3');
-        for (const a of RAINBOW_AXES) {
-          if (a.value < axisSpec.min || a.value > axisSpec.max) continue;
-          const b = el('button',
-                       this.state.axis === a.value ? 'btn sm on' : 'btn sm',
-                       a.label);
-          b.onclick = () => {
-            this.state.axis = a.value;
-            this.dev.setParam(layer, axisSpec.pid, a.value);
-            this.renderBody();
-          };
-          row.appendChild(b);
+      if (zone.label) this.body.appendChild(el('div', 'label', zone.label));
+
+      if (zone.fx === 'rainbow') {
+        const axisSpec = fx.params.find((p) => p.key === 'axis');
+        if (axisSpec) {
+          this.body.appendChild(el('div', 'label', 'direction'));
+          const row = el('div', 'grid3');
+          for (const a of RAINBOW_AXES) {
+            if (a.value < axisSpec.min || a.value > axisSpec.max) continue;
+            const b = el('button',
+                         this.state.axis === a.value ? 'btn sm on' : 'btn sm',
+                         a.label);
+            b.onclick = () => {
+              this.state.axis = a.value;
+              this.dev.setParam(zone.layer, axisSpec.pid, a.value);
+              this.renderBody();
+            };
+            row.appendChild(b);
+          }
+          this.body.appendChild(row);
         }
-        this.body.appendChild(row);
       }
-    }
 
-    for (const p of fx.params) {
-      if (p.key === 'axis') continue;
-      const spec = { ...p, val: live[p.key] ?? p.def };
-      this.body.appendChild(
-        this.control(spec, (v) => this.dev.setParam(layer, p.pid, v)));
+      for (const p of fx.params) {
+        if (p.key === 'axis') continue;
+        const spec = { ...p, val: live[p.key] ?? p.def };
+        this.body.appendChild(
+          this.control(spec, (v) => this.dev.setParam(zone.layer, p.pid, v)));
+      }
     }
   }
 
@@ -653,7 +655,20 @@ export class UI {
     const btn = el('button', 'btn sm', 'send');
     btn.onclick = go;
     row.append(input, btn);
-    this.body.append(row, log);
+
+    // The list comes from the DEVICE, not from a table in this app: a cheat
+    // sheet kept here would drift from the grammar the moment a command was
+    // added, and be wrong in the one situation it is consulted.
+    const cheat = el('button', 'btn sm dim', 'commands');
+    cheat.onclick = async () => {
+      const r = await this.dev.send('help').catch(() => null);
+      const lines = r?.help;
+      this.state.log = lines
+        ? lines.join('\n') + '\n\n' + (this.state.log ?? '')
+        : 'no help command on this firmware\n\n' + (this.state.log ?? '');
+      log.textContent = this.state.log;
+    };
+    this.body.append(row, cheat, log);
   }
 
   // One control for every descriptor, on all four surfaces.

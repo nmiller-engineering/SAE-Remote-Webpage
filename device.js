@@ -10,7 +10,7 @@ const TIMEOUT_MS = 2500;
 // Bumped when this app changes. Shown in Setup so a bug report names a
 // version, and so "did my upload go live" has an answer that is not
 // "clear your cache and squint".
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.5.0';
 
 // The device reports a protocol version covering the command grammar and the
 // descriptor shapes. Same major means this app can talk to it; a different

@@ -30,23 +30,26 @@ export const LOOKS = [
   {
     key: 'solid',
     label: 'solid',
-    fx: 'solid',
-    // Which layer `fx` ends up on. The Look page sends parameter edits to
-    // THIS layer; sending them to layer 0 regardless meant liquid's level and
-    // glass colour went to the solid vessel underneath, which has neither
-    // pid, so they silently did nothing — while liquid's colour (pid 3) hit
-    // the vessel's colour (also pid 3) and recoloured the glass instead.
-    layer: 0,
+    // TWO ZONES. Layer 0 paints the whole vessel, layer 1 replaces the ice
+    // on top, so each gets its own colour wheel. `zones` is what the Look
+    // page renders controls from: one entry per (effect, layer) pair, which
+    // is also why a look can no longer be described by a single `fx`.
+    zones: [
+      { label: 'glass', fx: 'solid', layer: 0 },
+      { label: 'ice', fx: 'solid', layer: 1 },
+    ],
     cmds: (fx) => [
       ...CLEAR,
       `fx 0 ${fx.solid}`, 'sel 0 all', 'blend 0 replace',
+      'set 0 3 16763904',
+      `fx 1 ${fx.solid}`, 'sel 1 group ice', 'blend 1 replace',
+      'set 1 3 4620980',
     ],
   },
   {
     key: 'rainbow',
     label: 'rainbow',
-    fx: 'rainbow',
-    layer: 0,
+    zones: [{ label: null, fx: 'rainbow', layer: 0 }],
     cmds: (fx) => [
       ...CLEAR,
       `fx 0 ${fx.rainbow}`, 'sel 0 all', 'blend 0 replace',
@@ -55,8 +58,9 @@ export const LOOKS = [
   {
     key: 'liquid',
     label: 'liquid',
-    fx: 'liquid',
-    layer: 1,                 // layer 0 is the grey vessel beneath it
+    // The wine on layer 1; the grey vessel on layer 0 has only a colour and
+    // is not worth a control of its own here.
+    zones: [{ label: null, fx: 'liquid', layer: 1 }],
     // kChampagne[] verbatim. The selections are the whole point: the liquid
     // is confined to `glas`, NOT the whole object. On `all` the level drives
     // the neck and base as well, so the waterline creeps up the stem and the
