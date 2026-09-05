@@ -7,6 +7,17 @@
 
 const TIMEOUT_MS = 2500;
 
+// Bumped when this app changes. Shown in Setup so a bug report names a
+// version, and so "did my upload go live" has an answer that is not
+// "clear your cache and squint".
+export const APP_VERSION = '1.3.0';
+
+// The device reports a protocol version covering the command grammar and the
+// descriptor shapes. Same major means this app can talk to it; a different
+// one means controls may be missing or wrong, which is worth saying plainly
+// rather than letting it present as a broken page.
+export const PROTO_MAJOR = 1;
+
 export class Device {
   constructor(transport) {
     this.t = transport;
@@ -90,6 +101,18 @@ export class Device {
   s2l()       { return this.send('s2l').then((r) => r.s2l?.params ?? []); }
   cfg()       { return this.send('cfg').then((r) => r.cfg?.params ?? []); }
   diag()      { return this.send('diag').then((r) => r.diag ?? null); }
+  version()   { return this.send('ver').then((r) => r.ver ?? null); }
+
+  // Current per-layer parameter VALUES. fxlist describes the effects and
+  // gives min/max/def but no live value, so sliders built from it alone open
+  // at the default and jump the moment you touch them — on a look that sets
+  // level to 195, the slider shows the default until you drag it and the
+  // liquid then snaps. `settings` is the only command that reports what each
+  // layer is actually set to.
+  async layerParams(layer) {
+    const r = await this.send('settings').catch(() => null);
+    return r?.settings?.layers?.[layer]?.params ?? {};
+  }
 
   setFx(layer, id)        { return this.send(`fx ${layer} ${id}`); }
   setParam(layer, pid, v) { return this.send(`set ${layer} ${pid} ${v}`); }

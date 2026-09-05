@@ -31,6 +31,12 @@ export const LOOKS = [
     key: 'solid',
     label: 'solid',
     fx: 'solid',
+    // Which layer `fx` ends up on. The Look page sends parameter edits to
+    // THIS layer; sending them to layer 0 regardless meant liquid's level and
+    // glass colour went to the solid vessel underneath, which has neither
+    // pid, so they silently did nothing — while liquid's colour (pid 3) hit
+    // the vessel's colour (also pid 3) and recoloured the glass instead.
+    layer: 0,
     cmds: (fx) => [
       ...CLEAR,
       `fx 0 ${fx.solid}`, 'sel 0 all', 'blend 0 replace',
@@ -40,6 +46,7 @@ export const LOOKS = [
     key: 'rainbow',
     label: 'rainbow',
     fx: 'rainbow',
+    layer: 0,
     cmds: (fx) => [
       ...CLEAR,
       `fx 0 ${fx.rainbow}`, 'sel 0 all', 'blend 0 replace',
@@ -49,6 +56,7 @@ export const LOOKS = [
     key: 'liquid',
     label: 'liquid',
     fx: 'liquid',
+    layer: 1,                 // layer 0 is the grey vessel beneath it
     // kChampagne[] verbatim. The selections are the whole point: the liquid
     // is confined to `glas`, NOT the whole object. On `all` the level drives
     // the neck and base as well, so the waterline creeps up the stem and the

@@ -9,7 +9,7 @@
 // The two exceptions are marked where they occur: looks.js (see its header)
 // and the rainbow axis labels.
 
-import { coalesce } from './device.js';
+import { coalesce, APP_VERSION, PROTO_MAJOR } from './device.js';
 import { LOOKS, RAINBOW_AXES } from './looks.js';
 
 const el = (tag, cls, text) => {
@@ -24,6 +24,120 @@ const el = (tag, cls, text) => {
 // codebase rather than being a flag on the descriptor.
 const isColour = (p) => (p.max - p.min) > 0xffff;
 
+
+// --- colour wheel ----------------------------------------------------------
+//
+// Hue around, saturation outward, value on a slider. Painted once per value
+// step into an ImageData rather than composited from CSS gradients, because
+// the conic-gradient approach cannot represent saturation falling off toward
+// the centre and ends up lying about which colour you are picking.
+function colorWheel(initial, apply, disabled) {
+  const SIZE = 168;
+  const wrap = el('div', 'wheel');
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = SIZE;
+  const ctx = cv.getContext('2d');
+
+  let [h, sv, v] = rgbToHsv(initial);
+  const send = coalesce((rgb) => apply(rgb), 80);
+
+  function paint() {
+    const img = ctx.createImageData(SIZE, SIZE);
+    const r0 = SIZE / 2;
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        const dx = x - r0, dy = y - r0;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        const i = (y * SIZE + x) * 4;
+        if (d > r0) { img.data[i + 3] = 0; continue; }
+        const hh = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+        const [r, g, b] = hsvToRgbParts(hh, Math.min(1, d / r0), v);
+        img.data[i] = r; img.data[i + 1] = g; img.data[i + 2] = b;
+        // Feather the last pixel so the rim is not stair-stepped.
+        img.data[i + 3] = d > r0 - 1 ? 255 * (r0 - d) : 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const a = h * Math.PI / 180;
+    const rr = sv * r0;
+    ctx.beginPath();
+    ctx.arc(r0 + Math.cos(a) * rr, r0 + Math.sin(a) * rr, 7, 0, 6.284);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  function pick(ev) {
+    if (disabled) return;
+    const b = cv.getBoundingClientRect();
+    const t = ev.touches ? ev.touches[0] : ev;
+    const scale = SIZE / b.width;
+    const dx = (t.clientX - b.left) * scale - SIZE / 2;
+    const dy = (t.clientY - b.top) * scale - SIZE / 2;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    h = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    sv = Math.min(1, d / (SIZE / 2));
+    paint();
+    send(hsvToRgb(h, sv, v));
+  }
+
+  cv.addEventListener('pointerdown', (e) => {
+    if (disabled) return;
+    cv.setPointerCapture(e.pointerId);
+    pick(e);
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (e.buttons) pick(e);
+  });
+  // Without this the wheel scrolls the page instead of picking a colour.
+  cv.style.touchAction = 'none';
+
+  const val = el('input');
+  val.type = 'range';
+  val.min = 0; val.max = 100; val.value = Math.round(v * 100);
+  val.disabled = disabled;
+  val.oninput = () => {
+    v = Number(val.value) / 100;
+    paint();
+    send(hsvToRgb(h, sv, v));
+  };
+
+  if (disabled) wrap.classList.add('locked');
+  wrap.append(cv, val);
+  paint();
+  return wrap;
+}
+
+function hsvToRgbParts(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  const t = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]];
+  const [r, g, b] = t[Math.floor(h / 60) % 6];
+  return [(r + m) * 255, (g + m) * 255, (b + m) * 255].map(Math.round);
+}
+
+function hsvToRgb(h, s, v) {
+  const [r, g, b] = hsvToRgbParts(h, s, v);
+  return (r << 16) | (g << 8) | b;
+}
+
+function rgbToHsv(packed) {
+  const r = ((packed >> 16) & 255) / 255;
+  const g = ((packed >> 8) & 255) / 255;
+  const b = (packed & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d) {
+    if (mx === r) h = ((g - b) / d) % 6;
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return [h, mx ? d / mx : 0, mx];
+}
+
 export class UI {
   constructor(dev, root) {
     this.dev = dev;
@@ -34,9 +148,12 @@ export class UI {
   }
 
   async start() {
-    const [effects, mod, info] = await Promise.all([
+    const [effects, mod, info, ver] = await Promise.all([
       this.dev.effects(), this.dev.modInfo(), this.dev.mapInfo(),
+      // Older firmware has no `ver`; absence is information, not an error.
+      this.dev.version().catch(() => null),
     ]);
+    this.state.ver = ver;
     this.state.effects = effects;
     this.state.mod = mod;
     this.state.groups = info?.groups ?? [];
@@ -63,10 +180,6 @@ export class UI {
       if (!this.dev.connected) return;
       try {
         this.state.diag = await this.dev.diag();
-        if (this.tab === 'sound') {
-          const a = await this.dev.send('audio').catch(() => null);
-          if (a?.audio) this.state.audio = a.audio;
-        }
         this.renderHeader();
         if (this.tab === 'sound') this.renderBody();
       } catch { /* a dropped poll is not worth surfacing */ }
@@ -115,6 +228,9 @@ export class UI {
   renderBody() {
     if (!this.body) return;
     this.body.innerHTML = '';
+    // renderLook and the others are async (they read live values from the
+    // device). Errors are caught here rather than becoming unhandled
+    // rejections that leave a half-drawn page with nothing in the console.
     const fn = {
       look: () => this.renderLook(),
       pattern: () => this.renderPattern(),
@@ -122,11 +238,13 @@ export class UI {
       setup: () => this.renderSetup(),
       console: () => this.renderConsole(),
     }[this.tab];
-    fn?.call(this);
+    Promise.resolve(fn?.call(this)).catch((e) => {
+      this.body.appendChild(el('div', 'label', String(e.message ?? e)));
+    });
   }
 
   // Buttons from LOOKS, parameters from the device.
-  renderLook() {
+  async renderLook() {
     const grid = el('div', 'grid3');
     for (const look of LOOKS) {
       const b = el('button',
@@ -157,6 +275,17 @@ export class UI {
     const fx = this.fxByName(look.fx);
     if (!fx) return;
 
+    // The layer the look put this effect on. NOT always 0: `liquid` sits on
+    // layer 1 above a grey vessel, and sending its edits to layer 0 meant
+    // level and glass went to an effect without those pids (silently
+    // ignored) while its colour collided with the vessel's own pid 3.
+    const layer = look.layer ?? 0;
+
+    // fxlist gives min/max/def but no live value; `settings` has the values.
+    // Without this a slider opens at the default and the object jumps to it
+    // the moment you touch it.
+    const live = await this.dev.layerParams(layer).catch(() => ({}));
+
     // Rainbow's direction: named buttons over a device-reported range.
     if (look.fx === 'rainbow') {
       const axisSpec = fx.params.find((p) => p.key === 'axis');
@@ -170,7 +299,7 @@ export class UI {
                        a.label);
           b.onclick = () => {
             this.state.axis = a.value;
-            this.dev.setParam(0, axisSpec.pid, a.value);
+            this.dev.setParam(layer, axisSpec.pid, a.value);
             this.renderBody();
           };
           row.appendChild(b);
@@ -181,8 +310,9 @@ export class UI {
 
     for (const p of fx.params) {
       if (p.key === 'axis') continue;
+      const spec = { ...p, val: live[p.key] ?? p.def };
       this.body.appendChild(
-        this.control(p, (v) => this.dev.setParam(0, p.pid, v)));
+        this.control(spec, (v) => this.dev.setParam(layer, p.pid, v)));
     }
   }
 
@@ -258,7 +388,13 @@ export class UI {
   }
 
   async renderSound() {
-    const a = this.state.audio;
+    // One `s2l` call carries both the tuning and the live values, so this
+    // page works on the device. It used to read the simulator-only `audio`
+    // command, which meant the stats were permanently em-dashes on hardware.
+    const r = await this.dev.send('s2l').catch(() => null);
+    const params = r?.s2l?.params ?? [];
+    const a = r?.s2l?.live ?? null;
+    this.state.s2lParams = params;
     const stats = el('div', 'stats');
     for (const [k, v] of [['tempo', a ? Math.round(a.bpm) : '—'],
                           ['conf', a ? a.conf.toFixed(2) : '—'],
@@ -270,10 +406,7 @@ export class UI {
     }
     this.body.appendChild(stats);
 
-    if (!this.state.s2lParams) {
-      this.state.s2lParams = await this.dev.s2l().catch(() => []);
-    }
-    if (!this.state.s2lParams.length) {
+    if (!params.length) {
       // `s2l` answers no_audio_service when no detector is attached. Say so
       // rather than rendering an empty page, which reads as a broken app.
       const n = el('div', 'label',
@@ -282,7 +415,7 @@ export class UI {
       this.body.appendChild(n);
       return;
     }
-    for (const p of this.state.s2lParams) {
+    for (const p of params) {
       this.body.appendChild(this.control(p, (v) => this.dev.setS2l(p.key, v)));
     }
 
@@ -290,7 +423,6 @@ export class UI {
     const def = el('button', 'btn sm', 'defaults');
     def.onclick = async () => {
       await this.dev.send('s2l defaults');
-      this.state.s2lParams = await this.dev.s2l();
       this.renderBody();
     };
     const save = el('button', 'btn sm', 'save');
@@ -322,6 +454,23 @@ export class UI {
       box.appendChild(el('div', 'k',
         `${d.est_ma} mA of ${budget?.val ?? '?'}`));
       this.body.appendChild(box);
+    }
+
+    // Versions, last: wanted when something is wrong, in the way otherwise.
+    const v = this.state.ver;
+    const foot = el('div', 'label');
+    foot.style.marginTop = '18px';
+    foot.textContent = v
+      ? `app ${APP_VERSION} · device ${v.build} · protocol ${v.proto}`
+      : `app ${APP_VERSION} · device: no ver command (pre-1.3 firmware)`;
+    this.body.appendChild(foot);
+
+    if (v && parseInt(v.proto, 10) !== PROTO_MAJOR) {
+      const w = el('div', 'label',
+        `Protocol ${v.proto} vs app ${PROTO_MAJOR}.x — some controls may be `
+        + 'missing or wrong.');
+      w.style.color = 'var(--warn)';
+      this.body.appendChild(w);
     }
 
     const acts = el('div', 'grid2');
@@ -439,13 +588,11 @@ export class UI {
     row.appendChild(el('label', '', p.key));
 
     if (isColour(p)) {
-      const inp = el('input');
-      inp.type = 'color';
-      inp.value = '#' + Number(p.val ?? p.def).toString(16).padStart(6, '0');
-      inp.disabled = disabled;
-      const send = coalesce((v) => apply(v), 80);
-      inp.oninput = () => send(parseInt(inp.value.slice(1), 16));
-      row.appendChild(inp);
+      // A native <input type=color> opens a full-screen system sheet on iOS:
+      // two taps to get there, the object hidden behind it, and no way to
+      // see the change while dragging. An inline wheel is one gesture with
+      // the glass in view, which is the whole point of a remote.
+      row.appendChild(colorWheel(Number(p.val ?? p.def), apply, disabled));
       return row;
     }
 
