@@ -131,13 +131,26 @@ export class UI {
     for (const look of LOOKS) {
       const b = el('button',
                    this.state.look === look.key ? 'btn on' : 'btn', look.label);
-      b.onclick = () => this.applyLook(look);
+      b.onclick = () => { this.state.lookErr = null; this.applyLook(look); };
       grid.appendChild(b);
     }
+    // `off` takes master brightness to zero and remembers the level; `on`
+    // restores it. Effects keep running either way, so the object resumes in
+    // the same phase. Two buttons rather than one toggle because the state
+    // is on the device, and a toggle that disagrees with it is worse than
+    // two buttons that always do what they say.
+    const onBtn = el('button', 'btn', 'on');
+    onBtn.onclick = async () => { await this.dev.send('on'); this.renderBody(); };
     const offBtn = el('button', 'btn dim', 'off');
-    offBtn.onclick = () => { this.state.look = null; this.dev.off(); this.renderBody(); };
-    grid.appendChild(offBtn);
+    offBtn.onclick = async () => { await this.dev.off(); this.renderBody(); };
+    grid.append(onBtn, offBtn);
     this.body.appendChild(grid);
+
+    if (this.state.lookErr) {
+      const e = el('div', 'label', this.state.lookErr);
+      e.style.color = 'var(--danger)';
+      this.body.appendChild(e);
+    }
 
     const look = LOOKS.find((l) => l.key === this.state.look);
     if (!look?.fx) return;
@@ -202,16 +215,29 @@ export class UI {
     this.body.appendChild(segRow);
 
     const grid = el('div', 'grid4');
+
+    // "none" is modulator id 0, which the grammar has always accepted; there
+    // was simply no way to reach it from here. Without it the only way to
+    // stop a pattern was to pick a different one, so the object could never
+    // be returned to plain unmodulated colour.
+    const pick = async (id) => {
+      await this.dev.setMod(id);
+      this.state.mod = await this.dev.modInfo();
+      this.renderBody();
+    };
+
+    const none = el('button', mod.id === 0 ? 'btn on' : 'btn dim', 'none');
+    none.onclick = () => pick(0);
+    grid.appendChild(none);
+
     for (const m of mod.available) {
       const b = el('button', m.id === mod.id ? 'btn on' : 'btn', m.name);
-      b.onclick = async () => {
-        await this.dev.setMod(m.id);
-        this.state.mod = await this.dev.modInfo();
-        this.renderBody();
-      };
+      b.onclick = () => pick(m.id);
       grid.appendChild(b);
     }
     this.body.appendChild(grid);
+
+    if (mod.id === 0) return;   // nothing below applies without a pattern
 
     const speeds = el('div', 'grid3');
     for (const s of ['slow', 'fast', 's2l']) {
@@ -246,6 +272,15 @@ export class UI {
 
     if (!this.state.s2lParams) {
       this.state.s2lParams = await this.dev.s2l().catch(() => []);
+    }
+    if (!this.state.s2lParams.length) {
+      // `s2l` answers no_audio_service when no detector is attached. Say so
+      // rather than rendering an empty page, which reads as a broken app.
+      const n = el('div', 'label',
+        'No beat detector on this build — the PDM microphone (M10) is not '
+        + 'implemented yet, so there is nothing to tune.');
+      this.body.appendChild(n);
+      return;
     }
     for (const p of this.state.s2lParams) {
       this.body.appendChild(this.control(p, (v) => this.dev.setS2l(p.key, v)));
@@ -433,8 +468,14 @@ export class UI {
     this.state.look = look.key;
     const byName = Object.fromEntries(
       this.state.effects.map((e) => [e.name, e.id]));
-    for (const cmd of look.cmds(byName[look.fx], byName)) {
-      await this.dev.send(cmd);
+    // Sequential and CHECKED. The queue serialises them anyway, but a
+    // command that fails silently leaves the object half-changed and looks
+    // like an unreliable radio rather than a rejected command.
+    for (const cmd of look.cmds(byName)) {
+      const r = await this.dev.send(cmd).catch((e) => ({ err: String(e) }));
+      if (r && r.ok === false) {
+        this.state.lookErr = `${cmd} -> ${r.err ?? 'failed'}`;
+      }
     }
     this.renderBody();
   }
