@@ -10,7 +10,7 @@ const TIMEOUT_MS = 2500;
 // Bumped when this app changes. Shown in Setup so a bug report names a
 // version, and so "did my upload go live" has an answer that is not
 // "clear your cache and squint".
-export const APP_VERSION = '1.5.0';
+export const APP_VERSION = '1.7.0';
 
 // The device reports a protocol version covering the command grammar and the
 // descriptor shapes. Same major means this app can talk to it; a different
@@ -96,7 +96,10 @@ export class Device {
   // ---- grammar -----------------------------------------------------------
 
   effects()   { return this.send('fxlist').then((r) => r.effects ?? []); }
-  modInfo()   { return this.send('mod').then((r) => r.mod ?? null); }
+  // slot is 'a' or 'b'; omitted addresses slot a, as the grammar does.
+  modInfo(slot)  {
+    return this.send(slot === 'b' ? 'mod b' : 'mod').then((r) => r.mod ?? null);
+  }
   mapInfo()   { return this.send('map info').then((r) => r.info ?? null); }
   s2l()       { return this.send('s2l').then((r) => r.s2l?.params ?? []); }
   cfg()       { return this.send('cfg').then((r) => r.cfg?.params ?? []); }
@@ -121,12 +124,16 @@ export class Device {
                                      : `sel ${layer} group ${group}`);
   }
   setBlend(layer, mode)   { return this.send(`blend ${layer} ${mode}`); }
-  setMod(id)              { return this.send(`mod ${id}`); }
-  setModParam(pid, v)     { return this.send(`mod set ${pid} ${v}`); }
+  setMod(id, slot)        { return this.send(`mod ${slot === 'b' ? 'b ' : ''}${id}`); }
+  setModParam(pid, v, slot) {
+    return this.send(`mod ${slot === 'b' ? 'b ' : ''}set ${pid} ${v}`);
+  }
   // One or more group names; empty or 'all' selects everything.
-  setModSel(groups) {
+  setModSel(groups, slot) {
     const g = [].concat(groups ?? []).filter((x) => x && x !== 'all');
-    return this.send(g.length ? `mod sel group ${g.join(' ')}` : 'mod sel all');
+    const s = slot === 'b' ? 'b ' : '';
+    return this.send(g.length ? `mod ${s}sel group ${g.join(' ')}`
+                              : `mod ${s}sel all`);
   }
   setSpeed(mode)          { return this.send(`mod speed ${mode}`); }
   setS2l(key, v)          { return this.send(`s2l ${key} ${v}`); }

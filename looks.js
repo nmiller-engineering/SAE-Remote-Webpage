@@ -83,6 +83,15 @@ export const LOOKS = [
     ],
   },
   {
+    key: 'pacman',
+    label: 'pacman',
+    zones: [{ label: null, fx: 'pacman', layer: 0 }],
+    cmds: (fx) => [
+      ...CLEAR,
+      `fx 0 ${fx.pacman}`, 'sel 0 all', 'blend 0 replace',
+    ],
+  },
+  {
     key: 'legacy',
     label: 'legacy',
     // The whole vessel warm — rim, neck, bowl, base — with the ice cold on

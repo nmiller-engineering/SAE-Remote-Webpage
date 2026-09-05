@@ -357,31 +357,48 @@ export class UI {
     }
   }
 
-  renderPattern() {
-    const mod = this.state.mod;
+  async renderPattern() {
+    // Two slots. Firmware composes both into one mask, each over its own
+    // selection, so the natural UI is a slot picker plus the same controls
+    // rather than two of everything.
+    const slot = this.state.slot ?? 'a';
+    const mod = await this.dev.modInfo(slot).catch(() => null);
     if (!mod) return;
+    this.state.mod = mod;
 
-    // Segment row, from map info. Three fit a phone; the rest are real
-    // groups and belong behind "more" rather than off the end of a row.
-    // Multi-select. Selector::groups_any is a bitmask and always was, so
-    // several sections at once is what the engine was built for — only the
-    // command parser and this row were single-choice.
+    // Show what BOTH slots are running, so switching does not hide the fact
+    // that the other one is on — the commonest confusion with two of
+    // anything is forgetting the one you cannot see.
+    const names = (id) =>
+      id === 0 ? 'none'
+               : (mod.available.find((m) => m.id === id)?.name ?? String(id));
+    const tabs = el('div', 'grid2');
+    for (const [key, idx] of [['a', 0], ['b', 1]]) {
+      const running = names(mod.slots?.[idx] ?? 0);
+      const b = el('button', slot === key ? 'btn sm on' : 'btn sm',
+                   `${key.toUpperCase()} · ${running}`);
+      b.onclick = () => {
+        this.state.slot = key;
+        this.state.segs = this.state.segsBySlot?.[key] ?? [];
+        this.renderBody();
+      };
+      tabs.appendChild(b);
+    }
+    this.body.appendChild(tabs);
+
     this.body.appendChild(el('div', 'label', 'applies to'));
     const segs = ['all', ...this.state.groups];
     const shown = this.state.allSegs ? segs : segs.slice(0, 3);
-    const sel = this.state.segs ?? [];        // empty means "all"
+    const sel = this.state.segs ?? [];
     const segRow = el('div', 'grid3');
     for (const g of shown) {
       const active = g === 'all' ? sel.length === 0 : sel.includes(g);
       const b = el('button', active ? 'btn sm on' : 'btn sm', g);
       b.onclick = () => {
-        if (g === 'all') {
-          this.state.segs = [];
-        } else {
-          const next = sel.includes(g) ? sel.filter((x) => x !== g)
-                                       : [...sel, g];
-          this.state.segs = next;
-        }
+        this.state.segs = g === 'all' ? []
+          : (sel.includes(g) ? sel.filter((x) => x !== g) : [...sel, g]);
+        this.state.segsBySlot = { ...(this.state.segsBySlot ?? {}),
+                                  [slot]: this.state.segs };
         this.applyModSel();
         this.renderBody();
       };
@@ -395,21 +412,13 @@ export class UI {
     this.body.appendChild(segRow);
 
     const grid = el('div', 'grid4');
-
-    // "none" is modulator id 0, which the grammar has always accepted; there
-    // was simply no way to reach it from here. Without it the only way to
-    // stop a pattern was to pick a different one, so the object could never
-    // be returned to plain unmodulated colour.
     const pick = async (id) => {
-      await this.dev.setMod(id);
-      this.state.mod = await this.dev.modInfo();
+      await this.dev.setMod(id, slot);
       this.renderBody();
     };
-
     const none = el('button', mod.id === 0 ? 'btn on' : 'btn dim', 'none');
     none.onclick = () => pick(0);
     grid.appendChild(none);
-
     for (const m of mod.available) {
       const b = el('button', m.id === mod.id ? 'btn on' : 'btn', m.name);
       b.onclick = () => pick(m.id);
@@ -417,14 +426,16 @@ export class UI {
     }
     this.body.appendChild(grid);
 
-    if (mod.id === 0) return;   // nothing below applies without a pattern
+    if (mod.id === 0) return;
 
+    // Speed is engine-wide, not per slot, so it is labelled as such rather
+    // than sitting inside a slot's controls where it would look per-slot.
+    this.body.appendChild(el('div', 'label', 'speed (both slots)'));
     const speeds = el('div', 'grid3');
-    for (const s of ['slow', 'fast', 's2l']) {
-      const b = el('button', mod.speed === s ? 'btn sm on' : 'btn sm', s);
+    for (const sp of ['slow', 'fast', 's2l']) {
+      const b = el('button', mod.speed === sp ? 'btn sm on' : 'btn sm', sp);
       b.onclick = async () => {
-        await this.dev.setSpeed(s);
-        this.state.mod = await this.dev.modInfo();
+        await this.dev.setSpeed(sp);
         this.renderBody();
       };
       speeds.appendChild(b);
@@ -433,7 +444,7 @@ export class UI {
 
     for (const p of mod.params ?? []) {
       this.body.appendChild(
-        this.control(p, (v) => this.dev.setModParam(p.pid, v)));
+        this.control(p, (v) => this.dev.setModParam(p.pid, v, slot)));
     }
   }
 
@@ -441,9 +452,7 @@ export class UI {
   // nothing: a pattern applied to no LEDs is indistinguishable from a broken
   // pattern, and nobody taps a segment off in order to see nothing.
   applyModSel() {
-    const sel = this.state.segs ?? [];
-    return this.dev.send(sel.length ? `mod sel group ${sel.join(' ')}`
-                                    : 'mod sel all');
+    return this.dev.setModSel(this.state.segs ?? [], this.state.slot ?? 'a');
   }
 
   async renderSound() {
