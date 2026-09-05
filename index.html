@@ -94,6 +94,9 @@ main { padding-top: 6px; }
   font-weight: 500; padding: 13px 30px; border-radius: 9px;
 }
 #err { color: var(--danger); font-size: 13px; min-height: 18px; }
+/* On the connect screen the app version is all that is knowable — the device
+   version needs a connection. Setup shows both once connected. */
+#appver { color: var(--dim); font-size: 12px; opacity: .7; }
 </style>
 </head>
 <body>
@@ -103,6 +106,7 @@ main { padding-top: 6px; }
     <button id="showall" hidden>Show all devices</button>
     <p id="hint"></p>
     <p id="err"></p>
+    <p id="appver"></p>
   </div>
 </div>
 
@@ -116,7 +120,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 </script>
 <script type="module">
 import { BleTransport, WsTransport } from './ble.js';
-import { Device } from './device.js';
+import { Device, APP_VERSION } from './device.js';
 import { UI } from './ui.js';
 
 const app = document.getElementById('app');
@@ -128,6 +132,9 @@ const hint = document.getElementById('hint');
 // something the app probes for — a page that silently connected to a
 // simulator instead of the object would be a confusing thing to debug.
 const useSim = new URLSearchParams(location.search).has('sim');
+
+document.getElementById('appver').textContent =
+  `SAE-Remote ${APP_VERSION}` + (useSim ? ' · simulator' : '');
 
 hint.textContent = useSim
   ? 'Simulator mode: connecting to tools/webble/bridge.py.'
